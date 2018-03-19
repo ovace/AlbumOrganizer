@@ -20,14 +20,14 @@ import (
 	"sync"
 	"time"
 
-	th "./utils/thumbnails"
-	dbl "github.com/ovace/albumMgmt/pkg/databaselayer"
-	fc "github.com/ovace/pkg/fileCopy"
-	gh "github.com/ovace/pkg/fileHash"
-	fm "github.com/ovace/pkg/fileMove"
-	fs "github.com/ovace/pkg/fileStats"
-	get "github.com/ovace/pkg/goexiftool"
-	dw "github.com/ovace/pkg/walk"
+	dbl "github.com/ovace/AlbumOrganizer/src/databaselayer"
+	th "github.com/ovace/AlbumOrganizer/src/utils/thumbnails"
+	fc "github.com/ovace/utils/fileCopy"
+	gh "github.com/ovace/utils/fileHash"
+	fm "github.com/ovace/utils/fileMove"
+	fs "github.com/ovace/utils/fileStats"
+	get "github.com/ovace/utils/goexiftool"
+	dw "github.com/ovace/utils/walk"
 	log "github.com/sirupsen/logrus"
 )
 
