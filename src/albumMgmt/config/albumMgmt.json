@@ -1,0 +1,18 @@
+{
+   "dryRun": true,
+   "verbose": true ,
+   "justCopy": true,
+   "srcPath": "..\\..\\Pictures/org",
+   "destPath": "..\\..\\Pictures / dest ",
+   "dupePath": "dupes",
+   "DB_USER": "mediadb",
+   "DB_PASS": "mediaDB",
+   "DB_HOST": "tcp(127.0.0.1:3306)",
+   "DB_SCHEMA": "mediadb",
+   "DB_OPTIONS": "parseTime=true&loc=Local&autocommit=true",
+   "oUsage": "",
+   "dtFormWTz": "2006:01:02 15:04:05-05:00",
+   "dtFormWoTz": "2006:01:02 15:04:05",
+   "folderFormat": "2006/01",
+   "logfile": "..\\logs\\expFileList-02.log"
+}

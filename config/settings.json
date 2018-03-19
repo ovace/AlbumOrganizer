@@ -1,0 +1,10 @@
+// Place your settings in this file to overwrite default and user settings.
+{
+    "go.gopath": "C:/Users/mamnoon/My_Workspace/goProjects;//nafees-pc/Ovace_Data/My_Workspace/goProjects",
+    "go.goroot": "C:/Utils/Apps/PortableApps/golang-portable-windows/go/",
+    "go.lintTool": "gometalinter",
+    "go.toolsGopath": "C:/Utils/Apps/PortableApps/golang-portable-windows",
+    "workbench.colorTheme": "Solarized Light",
+    "files.autoSave": "off",
+    "editor.fontFamily": "Aerial, Consolas, 'Courier New', monospace"
+}
