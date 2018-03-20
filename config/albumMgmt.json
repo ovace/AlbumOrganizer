@@ -3,7 +3,7 @@
    "verbose": true ,
    "justCopy": true,
    "srcPath": "..\\..\\Pictures/org",
-   "destPath": "..\\..\\Pictures / dest ",
+   "destPath": "..\\..\\Pictures/dest ",
    "dupePath": "dupes",
    "DB_USER": "mediadb",
    "DB_PASS": "*******",
