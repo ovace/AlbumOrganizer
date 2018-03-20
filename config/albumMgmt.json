@@ -6,7 +6,7 @@
    "destPath": "..\\..\\Pictures / dest ",
    "dupePath": "dupes",
    "DB_USER": "mediadb",
-   "DB_PASS": "mediaDB",
+   "DB_PASS": "*******",
    "DB_HOST": "tcp(127.0.0.1:3306)",
    "DB_SCHEMA": "mediadb",
    "DB_OPTIONS": "parseTime=true&loc=Local&autocommit=true",
