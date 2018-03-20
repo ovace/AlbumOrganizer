@@ -1,4 +1,4 @@
-package databaselayer
+package dbUtils
 
 import (
 	"gopkg.in/mgo.v2"

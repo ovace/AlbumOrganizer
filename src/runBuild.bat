@@ -1,6 +1,6 @@
 cls
 go clean -i -r
-go build -o albumMgmt.exe albumMgmt.go
+go build -o ../bin/albumMgmt.exe main.go
 
 rm -r C:\Workspaces\My_Workspace\goProjects\src\github.com\ovace\albumMgmt\Pictures\dest4
 

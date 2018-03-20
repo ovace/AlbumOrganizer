@@ -1,4 +1,4 @@
-package databaselayer
+package dbUtils
 
 import (
 	"database/sql"

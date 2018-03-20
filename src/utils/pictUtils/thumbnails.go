@@ -1,12 +1,41 @@
-package thumbnails
+package pictUtils
 
 import (
+	"bufio"
+	"errors"
+	"image"
+	"image/gif"
+	"image/jpeg"
+	"image/png"
+	"os"
+
+	log "github.com/sirupsen/logrus"
+
+	"github.com/nfnt/resize"
+	"golang.org/x/image/bmp"
 )
 
-func (env *Env) generateThumbImg(imgFile string, thImgName string, thPath string, thSize uint) (err error) {
+func init() {
+	// Log as JSON instead of the default ASCII formatter.
+	//log.SetFormatter(&log.JSONFormatter{})
+	log.SetFormatter(&log.TextFormatter{})
+}
+
+func decodeConfig(filename string) (image.Config, string, error) {
+	f, err := os.Open(filename)
+	if err != nil {
+		return image.Config{}, "", err
+	}
+	defer f.Close()
+	return image.DecodeConfig(bufio.NewReader(f))
+}
+
+//var DecodeConfig = decodeconfig
+
+func GenerateThumbImg(imgFile string, thImgName string, thPath string, thSize uint) (err error) {
 
 	var img image.Image
-	_, format, err := env.decodeConfig(imgFile)
+	_, format, err := decodeConfig(imgFile)
 
 	if err != nil {
 		log.Fatal(err)

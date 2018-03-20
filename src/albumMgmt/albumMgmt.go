@@ -1,13 +1,17 @@
-package main
+package albumMgmt
 
 //package experiments
 
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"image"
+	"image/gif"
+	"image/jpeg"
+	"image/png"
 	"io/ioutil"
 
 	yaml "gopkg.in/yaml.v2"
@@ -20,8 +24,9 @@ import (
 	"sync"
 	"time"
 
-	dbl "github.com/ovace/AlbumOrganizer/src/databaselayer"
-	th "github.com/ovace/AlbumOrganizer/src/utils/thumbnails"
+	"github.com/nfnt/resize"
+	cU "github.com/ovace/AlbumOrganizer/src/utils/convUtils"
+	dbl "github.com/ovace/AlbumOrganizer/src/utils/dbUtils"
 	fc "github.com/ovace/utils/fileCopy"
 	gh "github.com/ovace/utils/fileHash"
 	fm "github.com/ovace/utils/fileMove"
@@ -29,6 +34,7 @@ import (
 	get "github.com/ovace/utils/goexiftool"
 	dw "github.com/ovace/utils/walk"
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/image/bmp"
 )
 
 //Initializers
@@ -41,26 +47,6 @@ const (
 		-src=<srcfile>   	source path [default=""]
 		-dest=<dest location>  	destination path [default=""]
 	`
-)
-
-const (
-	DT_GPS         = "2006:01:02  15:04:05Z"
-	DT_ANSIC       = "Mon Jan _2 15:04:05 2006"
-	DT_UnixDate    = "Mon Jan _2 15:04:05 MST 2006"
-	DT_RubyDate    = "Mon Jan 02 15:04:05 -0700 2006"
-	DT_RFC822      = "02 Jan 06 15:04 MST"
-	DT_RFC822Z     = "02 Jan 06 15:04 -0700" // RFC822 with numeric zone
-	DT_RFC850      = "Monday, 02-Jan-06 15:04:05 MST"
-	DT_RFC1123     = "Mon, 02 Jan 2006 15:04:05 MST"
-	DT_RFC1123Z    = "Mon, 02 Jan 2006 15:04:05 -0700" // RFC1123 with numeric zone
-	DT_RFC3339     = "2006-01-02T15:04:05Z07:00"
-	DT_RFC3339Nano = "2006-01-02T15:04:05.999999999Z07:00"
-	DT_Kitchen     = "3:04PM"
-	// Handy time stamps.
-	Stamp      = "Jan _2 15:04:05"
-	StampMilli = "Jan _2 15:04:05.000"
-	StampMicro = "Jan _2 15:04:05.000000"
-	StampNano  = "Jan _2 15:04:05.000000000"
 )
 
 var (
@@ -206,14 +192,14 @@ func init() {
 	//log.SetLevel(log.WarnLevel)
 }
 
-func main() {
+func albumMgmt() {
 	// capture the time of start of process
 	t0 := time.Now()
 
 	env := &Env{}
 	config := env.Config
 
-	config = env.loadConfigJson("config/albumMgmt.json")
+	config = env.loadConfigJson("../config/albumMgmt.json")
 
 	log.Infof("Configuration read from JSON file -- conifg:: %v\n", config)
 
@@ -380,6 +366,8 @@ func main() {
 
 } //Close main
 
+var AlbumMgmt = albumMgmt
+
 func (env *Env) processfileList(hm map[uint32][]string) (err error) {
 
 	var Err error
@@ -424,12 +412,16 @@ func (env *Env) processEachFile(fps []string) (err error) {
 	var Err error
 
 	for j := range fps {
+		//chRetData := make(chan error)
+		//defer close(chRetData)
 
 		err := env.manageFileinfo(j, fps)
 		if err != nil {
 			log.Errorf("manageFileInfo error. err: %v\n", err)
 		}
+		//chRetData <- err
 
+		//Err = <-chRetData
 		Err = err
 
 	} // close map iterator loop "j"
@@ -465,7 +457,7 @@ func (env *Env) manageFileinfo(j int, fps []string) (err error) {
 	ext := strings.ToLower(filepath.Ext(fps[j]))
 	dir := filepath.Dir(fps[j])
 
-	/* // Create the source file information object
+	// Create the source file information object
 	fileInfo := &FileInfo{
 		fileName: fps[j],
 		fileHash: fHash,
@@ -478,8 +470,10 @@ func (env *Env) manageFileinfo(j int, fps []string) (err error) {
 		dModel:   exfe.Model,
 	}
 
-	log.Infof("fileInfo: %v\n", fileInfo) */
-	// create source file data object
+	log.Infof("fileInfo: %v\n", fileInfo)
+
+	// check if file already exists, ignore it
+
 	fileList := dbl.Filelist{
 		//	Fileid:            			,//int			`bson:"file_id"`
 		Filename:     fName,             //string		`bson:"file_name"`
@@ -493,33 +487,15 @@ func (env *Env) manageFileinfo(j int, fps []string) (err error) {
 		//Rowactiondatetime: t0,         //time.Time	`bson:"row_ts"`
 	}
 
-	// Generate target file information
-	tgtfileName := fmt.Sprint(fHash) + "_" + exfe.Model + "_" + strconv.Itoa(dupcount) + ext
-	// Generate the output folder name
-	tgtfolder := ftm.ttm.Format(env.Config.FolderFormat)
-	log.Infof("fileName: %v\n", tgtfileName)
-	tgtPath := filepath.Join(destPath, dupePath, tgtfolder) //, tgtfileName) //ToDo: Move this to a function
-
-	// create dest file data object
-	tgtInfo := dbl.TgtInfoList{
-		//Targetid:  ,  								//int       `bson:"-"`           //","int(11)","NO","PRI","","auto_increment"
-		Fileid:       int(env.srcID),    //int       `bson:"file_id"`     //","int(11)","NO","MUL","",""
-		Filename:     tgtfileName,       //string    `bson:"file_name"`   //","varchar(254)","NO","","",""
-		Filesuffix:   ext,               //string    `bson:"file_suffix"` //","varchar(5)","YES","","",""
-		Filelocation: tgtPath,           //string    `bson:"file_loc"`    //","varchar(254)","YES","","",""
-		Filehash:     fmt.Sprint(fHash), //string    `bson:"file_hash"`   //","varchar(254)","YES","","",""
-		Filesize:     float32(fSize),    //float32   `bson:"file_siz"`    //","float","YES","","",""
-		Filedate:     ftm.ttm,           //time.Time `bson:"file_date"`   //","datetime","YES","","",""
-		Fileaction:   "T",               //T = To-Do	//string    `bson:"file_action"` //","char(2)","NO","","",""
-		Validated:    0,                 //int       `bson:"validated"`   //","tinyint(1)","NO","","0",""
-		Rowaction:    "A",               //string    `bson:"row_action"`  //","char(2)","NO","","",""
-		//Rowactiondatetime:  ,  						//time.Time `bson:"row_ts"`      //","datetime","NO","","CURRENT_TIMESTAMP",""
-	}
-	// check if file already exists, ignore it
+	//Check if this file entry already exists in db
 	dupePath = "" //initially set the dupe path to blank.
-
-	//<<Placeholder call env.chk4dupe
-
+	//fileIDnCount := dbl.FileIDnCount{}
+	fileIDnCount, err := dbconn.GetFileID(fileList)
+	if err != nil {
+		log.Errorf("Error getting existing file id  -- err: %v\n", err)
+		//err = errors.New("skip: error checking if file already exists") //<to-do> check if file also exists on filesystem tgt folder
+		return err
+	}
 	//process further only if file does not exist
 	if !fileIDnCount.FileID.Valid {
 		// collect metrics for reporting
@@ -534,23 +510,46 @@ func (env *Env) manageFileinfo(j int, fps []string) (err error) {
 		env.Report.eFiles = EFiles
 		env.Report.eBytes = EBytes
 		lock.Unlock()
+		// check if filehash already exists in DB
+		fileminmaxid := dbl.FileMinMaxID{}
+		fileminmaxid, err = dbconn.GetMinMaxID(fmt.Sprint(fHash))
+		dupcount := 0
+		if err != nil {
+			log.Errorf("Error getting min max id: %v\t error: %v\t dupoffset %v\n", fileminmaxid, err, dupcount)
+		} else {
+			// file exists, increment duplicate count accordingly
+			dupcount = fileminmaxid.MaxDup + 1
+
+			//change file path based on if file is dupe
+			dupePath = env.Config.DupePath
+
+			log.Warnf("File is duplicate - Fileminmaxid: %v\t  dupoffset: %v\n", fileminmaxid, dupcount)
+		}
+
+		log.Infof("min max ID: %v \n ", fileminmaxid)
 
 		// Add file info into database fileinfo table
-		if !dryRun { // add file to db table only is
-			//1> dryrun is false
-			//2> DB record does not exist <<TO_DO>>
-			//3> target file does not exist <<TO_DO>>
-
+		if !dryRun { // add file to db table only is dryrun is false
+			//chRetData := make(chan error)
+			//defer close(chRetData)
+			//fileDone := make(chan bool)
+			//defer close(fileDone)
+			//go func(fileList dbl.Filelist) {
 			srcFilerowid, err = dbconn.AddFile(fileList)
 			if err != nil {
 				log.Errorf("Error adding file record to database: %v\t error: %v \n", fileList, err)
 			}
 			log.Infoln("Source file Row ID: ", srcFilerowid)
 			env.srcID = srcFilerowid
-
+			//env = &Env{dbconn: dbconn, fHash: fHash, srcID: srcFilerowid}
 			log.Infof("Env after addFilelist: %v\n", env)
 			// end of filelist db insert
+			//chRetData <- err
+			//fileDone <- true
+			//}(fileList)
 
+			//Err = <-chRetData
+			//<-fileDone
 		}
 
 		// Get face data and coordinates, <<to-do>> update the Album database
@@ -602,7 +601,9 @@ func (env *Env) manageFileinfo(j int, fps []string) (err error) {
 					Rowaction: "A",               //	string    `bson:"row_action"`	// char(2) NOT NULL,
 				}
 				if !dryRun { // add info to db table only is dryrun is false
-
+					//chRetData := make(chan int64)
+					//defer close(chRetData)
+					//go func(faceInfo dbl.RegionInfo) {
 					firowid, err := dbconn.AddRegionInfo(faceInfo)
 					if err != nil {
 						log.Errorf("Error adding file record to database: %v\t error: %v \n", faceInfo, err)
@@ -610,94 +611,69 @@ func (env *Env) manageFileinfo(j int, fps []string) (err error) {
 					//log.Infoln("Face info Table Row ID: ", firowid)
 					// end of addRegionInfo db insert
 					log.Infof("faceInfo: %v\n firowid: %v\n", faceInfo, firowid)
-
+					//chRetData <- firowid
+					//close(chRetData)
+					//}(faceInfo)
+					//env = &Env{faceID: <-chRetData}
+					//env.faceID = <-chRetData
 					env.faceID = firowid
 					log.Infof("Env after addRegionInfo: %v\n", env)
 				}
 			}
 		} else {
 			log.Infof("EXIF RegionInfo-RegionList missin")
+			fcI.regionList.Name = ""
+			fcI.regionList.Type = ""
+			fcI.regionList.Area.H = 0
+			fcI.regionList.Area.W = 0
+			fcI.regionList.Area.X = 0
+			fcI.regionList.Area.Y = 0
+			fcI.regionList.Area.Unit = ""
 		}
 		log.Infof("Face Info: %v\n", fcI)
 
-		if j > 0 { // If file is a duplicate
-			// and if it doesnt already exist at target <<TO-DO>>
-
+		if j > 0 {
 			// Add dupe file info into database dupes table
 			dupelist := dbl.DupeList{
-				//Dupeid:  ,  						  //int       `bson:"-"`           //,"int(11)","NO","PRI","","auto_increment"
-				Fileid:     int(env.srcID),     //int       `bson:"file_id"`     //,"int(11)","NO","MUL","",""
-				Dupefileid: fileminmaxid.MinID, //int       `bson:"dupefile_id"` //,"int(11)","NO","","",
-				Rowaction:  "A",                //string    `bson:"row_action"`  //,"char(2)","NO","","",""
-				//Rowactiondatetime:  ,  		  //time.Time `bson:"row_ts"`      //,"datetime","NO","","CURRENT_TIMESTAMP",""
+				//Dupeid:  ,  //            int       `bson:"-"`           //,"int(11)","NO","PRI","","auto_increment"
+				Fileid:     int(env.srcID),     //             int       `bson:"file_id"`     //,"int(11)","NO","MUL","",""
+				Dupefileid: fileminmaxid.MinID, //         int       `bson:"dupefile_id"` //,"int(11)","NO","","",
+				Rowaction:  "A",                //        string    `bson:"row_action"`  //,"char(2)","NO","","",""
+				//Rowactiondatetime:  ,  //  time.Time `bson:"row_ts"`      //,"datetime","NO","","CURRENT_TIMESTAMP",""
 			}
 			if !dryRun { // add file to db table only is dryrun is false
-
+				//chRetData := make(chan int64)
+				//defer close(chRetData)
+				//go func(dupelist dbl.DupeList) {
 				duperowid, err := dbconn.AddDupes(dupelist)
 				if err != nil {
 					log.Errorf("Error adding file record to database: %v\t error: %v \n", dupelist, err)
 				}
 
 				log.Println("Dupe file Row ID: ", duperowid)
-
+				// end of dupes db insert
+				//chRetData <- duperowid
+				//}(dupelist)
+				//env.dupeID = <-chRetData
 				env.dupeID = duperowid
 				log.Infof("Env after addDupes: %v\n", env)
 			}
 		}
-		// get gps iformation from EXIF
-		gps := exfe //.GPSInfo
-
-		//parse GPS DateTime field
-		gpsdtm, err := time.Parse(DT_GPS, gps.GPSDateTime)
-		if err != nil {
-			log.Errorf("timeconv error GPSDateTime: %v\t Form: %v\t Err: %v\n", gps.GPSDateTime, DT_GPS, err)
-		}
-
-		// Creat  exifinfo data object
+		// Add EXIF  info into database fileinfo table
 		exiflist := dbl.EXIFInfoList{
-			//Exifid:           ,						//int       `bson:"-"`           //","int(11)","NO","PRI","","auto_increment"
-			//Rowactiondatetime: 						//time.Time `bson:"row_ts"`      //","datetime","NO","","CURRENT_TIMESTAMP",""
-			Accessdate:          ftm.taccess,             //time.Time `bson:"access_time"` //","datetime","YES","","",""
-			Comments:            exfe.UserComment,        //string    `bson:"comments"`    //","varchar(254)","YES","","",""
-			Createdate:          ftm.tcreate,             //time.Time `bson:"create_time"` //","datetime","YES","","",""
-			Facecoords:          "FaceCoords",            //string    `bson:"face_coords"` //","varchar(254)","YES","","",""
-			Faces:               "Faces",                 //string    `bson:"faces"`       //","varchar(254)","YES","","",""
-			Fileid:              int(env.srcID),          //int       `bson:"file_id"`     //","int(11)","NO","MUL","",""
-			GPSAltitude:         gps.GPSAltitude,         //string   `bson:"gps_altitude"`          //` varchar(254) DEFAULT NULL,
-			GPSAltitudeRef:      gps.GPSAltitudeRef,      //string   `bson:"gps_altitude_ref"`      //` varchar(254) DEFAULT NULL,
-			GPSDateTime:         gpsdtm,                  //string 	 `bson:"gps_datetime"`          //` datetime,
-			GPSLatitude:         gps.GPSLatitude,         //string   `bson:"gps_latitude"`          //` varchar(254) DEFAULT NULL,
-			GPSLatitudeRef:      gps.GPSLatitudeRef,      //string    `bson:"gps_latitude_ref"`      //` varchar(254) DEFAULT NULL,
-			GPSLongitude:        gps.GPSLongitude,        //int       `bson:"gps_longitude"`         //` varchar(254) DEFAULT NULL,
-			GPSLongitudeRef:     gps.GPSLongitudeRef,     //string    `bson:"gps_longitude_ref"`     //` varchar(254) DEFAULT NULL,
-			GPSMapDatum:         gps.GPSMapDatum,         //string    `bson:"gps_map_datum"`         //` varchar(254) DEFAULT NULL,
-			GPSProcessingMethod: gps.GPSProcessingMethod, // string    `bson:"gps_processing_method"` //` varchar(254) DEFAULT NULL,
-			GPSVersionID:        gps.GPSVersionID,        //string    `bson:"gps_version_id"`        //` varchar(254) DEFAULT NULL,
-			ImageDescription:    exfe.ImageDescription,   //string    `bson:"image_description"`     //` varchar(254) DEFAULT NULL,
-			Make:                exfe.Make,               //string    `bson:"make"`                  //` varchar(254) DEFAULT NULL,
-			Model:               exfe.Model,              //string    `bson:"model"`                 //` varchar(254) DEFAULT NULL,
-			Modifydate:          ftm.tmodify,             //time.Time `bson:"mod_time"`    //","datetime","YES","","",""
-			Orientation:         exfe.Orientation,        //int       `bson:"orientation"`           //` int DEFAULT NULL,
-			Rowaction:           "A",                     //string    `bson:"row_action"`  //","char(2)","NO","","",""
-			Tags:                "Tags",                  //string    `bson:"tags"`        //","varchar(254)","YES","","",""
+			//Exifid:           ,					//int       `bson:"-"`           //","int(11)","NO","PRI","","auto_increment"
+			Fileid:     int(env.srcID),   //int       `bson:"file_id"`     //","int(11)","NO","MUL","",""
+			Createdate: ftm.tcreate,      //time.Time `bson:"create_time"` //","datetime","YES","","",""
+			Modifydate: ftm.tmodify,      //time.Time `bson:"mod_time"`    //","datetime","YES","","",""
+			Accessdate: ftm.taccess,      //time.Time `bson:"access_time"` //","datetime","YES","","",""
+			Comments:   exfe.UserComment, //string    `bson:"comments"`    //","varchar(254)","YES","","",""
+			Tags:       "Tags",           //string    `bson:"tags"`        //","varchar(254)","YES","","",""
+			Faces:      "Faces",          //string    `bson:"faces"`       //","varchar(254)","YES","","",""
+			Facecoords: "FaceCoords",     //string    `bson:"face_coords"` //","varchar(254)","YES","","",""
+			Rowaction:  "A",              //string    `bson:"row_action"`  //","char(2)","NO","","",""
+			//Rowactiondatetime: 					//time.Time `bson:"row_ts"`      //","datetime","NO","","CURRENT_TIMESTAMP",""
 		}
 
-		/* gpslist := dbl.EXIFInfoList.GPSInfo{
-
-			GPSAltitude:         gps.GPSAltitude,         //float32   `bson:"gps_altitude"`          //` float DEFAULT NULL,
-			GPSAltitudeRef:      gps.GPSAltitudeRef,      //float32   `bson:"gps_altitude_ref"`      //` float DEFAULT NULL,
-			GPSLatitude:         gps.GPSLatitude,         //float32   `bson:"gps_latitude"`          //` float DEFAULT NULL,
-			GPSLatitudeRef:      gps.GPSLatitudeRef,      //string    `bson:"gps_latitude_ref"`      //` varchar(254) DEFAULT NULL,
-			GPSLongitude:        gps.GPSLongitude,        //int       `bson:"gps_longitude"`         //` int DEFAULT NULL,
-			GPSLongitudeRef:     gps.GPSLongitudeRef,     //string    `bson:"gps_longitude_ref"`     //` varchar(254) DEFAULT NULL,
-			GPSMapDatum:         gps.GPSMapDatum,         //string    `bson:"gps_map_datum"`         //` varchar(254) DEFAULT NULL,
-			GPSProcessingMethod: gps.GPSProcessingMethod, // string   `bson:"gps_processing_method"` //` varchar(254) DEFAULT NULL,
-			GPSDateTime:         gps.GPSDateTime,         //string	 `bson:"gps_datetime"`          //` datetime,
-			GPSVersionID:        gps.GPSVersionID,        //string    `bson:"gps_version_id"`        //` varchar(254) DEFAULT NULL,
-
-		}
-		*/
-		// Add EXIF Info into database exifinfo table
 		if !dryRun { // add file to db table only is dryrun is false
 			//go func(exiflist dbl.EXIFInfoList) {
 			exifrowid, err := dbconn.AddEXIF(exiflist)
@@ -708,16 +684,57 @@ func (env *Env) manageFileinfo(j int, fps []string) (err error) {
 			// end of exifInfolist db insert
 			//}(exiflist)
 		}
-		// Add Target  info into database targetinfo table
-		if !dryRun { // add file to db table only is dryrun is false
 
+		// Generate target file information
+		tgtfileName := fmt.Sprint(fHash) + "_" + exfe.Model + "_" + strconv.Itoa(dupcount) + ext
+		// Generate the output folder name
+		tgtfolder := ftm.ttm.Format(env.Config.FolderFormat)
+		log.Infof("fileName: %v\n", tgtfileName)
+		tgtPath := filepath.Join(destPath, dupePath, tgtfolder) //, tgtfileName) //ToDo: Move this to a function
+		// Create the dest file information object
+		destInfo := &DestInfo{
+			fileHash: fHash,
+			dupCnt:   dupcount,
+			totDup:   len(fps) - 1,
+			fileName: tgtfileName,
+			dirPath:  tgtPath,
+			atime:    ftm.saccess,
+			mtime:    ftm.smodify,
+			ctime:    ftm.screate,
+		}
+		log.Infof("destInfo: %v\n", destInfo)
+
+		// Add Target  info into database targetinfo table
+		tgtInfo := dbl.TgtInfoList{
+			//Targetid:  ,  								//int       `bson:"-"`           //","int(11)","NO","PRI","","auto_increment"
+			Fileid:       int(env.srcID),    //int       `bson:"file_id"`     //","int(11)","NO","MUL","",""
+			Filename:     tgtfileName,       //string    `bson:"file_name"`   //","varchar(254)","NO","","",""
+			Filesuffix:   ext,               //string    `bson:"file_suffix"` //","varchar(5)","YES","","",""
+			Filelocation: tgtPath,           //string    `bson:"file_loc"`    //","varchar(254)","YES","","",""
+			Filehash:     fmt.Sprint(fHash), //string    `bson:"file_hash"`   //","varchar(254)","YES","","",""
+			Filesize:     float32(fSize),    //float32   `bson:"file_siz"`    //","float","YES","","",""
+			Filedate:     ftm.ttm,           //time.Time `bson:"file_date"`   //","datetime","YES","","",""
+			Fileaction:   "T",               //T = To-Do	//string    `bson:"file_action"` //","char(2)","NO","","",""
+			Validated:    0,                 //int       `bson:"validated"`   //","tinyint(1)","NO","","0",""
+			Rowaction:    "A",               //string    `bson:"row_action"`  //","char(2)","NO","","",""
+			//Rowactiondatetime:  ,  						//time.Time `bson:"row_ts"`      //","datetime","NO","","CURRENT_TIMESTAMP",""
+		}
+
+		if !dryRun { // add file to db table only is dryrun is false
+			//chRetData := make(chan int64)
+			//defer close(chRetData)
+			//go func(tgtInfo dbl.TgtInfoList) {
 			tgtrowid, err = dbconn.AddTgtInfo(tgtInfo)
 			if err != nil {
 				log.Errorf("Error adding file record to database: %v\t error: %v \n", tgtInfo, err)
 			}
 			log.Infof("Targetinfo Table Row ID: %v\n", tgtrowid)
 			// end of tgtInfolist db insert
+			//chRetData <- tgtrowid
 
+			//close(chRetData)
+			//}(tgtInfo)
+			//env.tgtID = <-chRetData
 			env.tgtID = tgtrowid
 			log.Infof("ChRetData after addTgtInfo: %v\n", env.tgtID)
 			log.Infof("Env after addTgtInfo: %v\n", env)
@@ -727,11 +744,13 @@ func (env *Env) manageFileinfo(j int, fps []string) (err error) {
 		if (dupcount <= 0) && (!dryRun) {
 			// check if its an Image file
 			imageTypes := []string{".jpg", ".jpeg", ".png", ".gif", ".bmp"}
-			if env.stringInSlice(strings.ToLower(ext), imageTypes) {
+			if cU.StringInSlice(strings.ToLower(ext), imageTypes) {
 
 				//generate thumbnails
 				thSizes := make(map[string]uint)
-
+				//thSizes["small"] = 500
+				//thSizes["med"] = 1000
+				//thSizes["large"] = 2000
 				thSizes["2s"] = uint((exfe.ImageHeight / 100) * 12) //240 //240x180  //orig:2048x1536	12%
 				thSizes["me"] = uint((exfe.ImageHeight / 100) * 39) //792x594		39%
 				thSizes["th"] = uint((exfe.ImageHeight / 100) * 7)  //144x108		7%
@@ -750,7 +769,7 @@ func (env *Env) manageFileinfo(j int, fps []string) (err error) {
 					wg.Add(1)
 					go func(imageFile string, thImgName string, thPath string, thVal uint) {
 						defer wg.Done()
-						err = th.env.generateThumbImg(imageFile, thImgName, thPath, thVal)
+						err = env.generateThumbImg(imageFile, thImgName, thPath, thVal)
 						if err != nil {
 							log.Errorf("Error generating thumbnail: %v\t error: %v \n", thImgName, err)
 						}
@@ -758,16 +777,16 @@ func (env *Env) manageFileinfo(j int, fps []string) (err error) {
 
 					// Insert thumbnail info into table thumbnails
 					thlist := dbl.ThumbList{
-						//Thid:  ,  						 //int       `bson:"-"`           //","int(11)","NO","PRI","","auto_increment"
-						Fileid:     int(env.srcID),    //int       `bson:"file_id"`     //","int(11)","NO","MUL","",""
-						Targetid:   int(env.tgtID),    //int       `bson:"tgt_id"`      //,"int(11)","NO","MUL","",""
-						Filename:   thImgName,         //string    `bson:"file_name"`   //","varchar(254)","NO","","",""
-						Filesuffix: ext,               //string    `bson:"file_suffix"` //","varchar(254)","YES","","",""
-						Filesize:   exfe.ImageSize,    //string    `bson:"file_size"`   //","varchar(254)","YES","","",""
-						Thsize:     fmt.Sprint(thVal), //string    `bson:"th_size"`     //","varchar(254)","NO","","",""
-						Fileloc:    thPath,            //string    `bson:"file_loc"`    //","varchar(254)","YES","","",""
-						Rowaction:  "A",               //string    `bson:"row_action"`  //","char(2)","NO","","",""
-						//Rowactiondatetime:  ,  		 //time.Time `bson:"row_ts"`      //","datetime","NO","","CURRENT_TIMESTAMP",""
+						//Thid:  ,  //              int       `bson:"-"`           //","int(11)","NO","PRI","","auto_increment"
+						Fileid:     int(env.srcID),    //int(srcFilerowid), //            int       `bson:"file_id"`     //","int(11)","NO","MUL","",""
+						Targetid:   int(env.tgtID),    //int(tgtrowid),     //          int       `bson:"tgt_id"`      //,"int(11)","NO","MUL","",""
+						Filename:   thImgName,         //          string    `bson:"file_name"`   //","varchar(254)","NO","","",""
+						Filesuffix: ext,               //        string    `bson:"file_suffix"` //","varchar(254)","YES","","",""
+						Filesize:   exfe.ImageSize,    //          string   `bson:"file_size"`   //","varchar(254)","YES","","",""
+						Thsize:     fmt.Sprint(thVal), //            string   `bson:"th_size"`     //","varchar(254)","NO","","",""
+						Fileloc:    thPath,            //           string    `bson:"file_loc"`    //","varchar(254)","YES","","",""
+						Rowaction:  "A",               //         string    `bson:"row_action"`  //","char(2)","NO","","",""
+						//Rowactiondatetime:  ,  // time.Time `bson:"row_ts"`      //","datetime","NO","","CURRENT_TIMESTAMP",""
 					}
 					if !dryRun { // add file to db table only is dryrun is false
 						wg.Add(1)
@@ -929,6 +948,70 @@ func (env *Env) time4file(exf get.EXIF /*map[string]interface{}*/) (ftm *FileTim
 	return ftm, err
 }
 
+func (env *Env) generateThumbImg(imgFile string, thImgName string, thPath string, thSize uint) (err error) {
+
+	var img image.Image
+	_, format, err := env.decodeConfig(imgFile)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+	// open "test.jpg"
+	file, err := os.Open(imgFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+	switch format {
+	case "jpeg":
+		img, err = jpeg.Decode(file)
+	case "png":
+		img, err = png.Decode(file)
+	case "gif":
+		img, err = gif.Decode(file)
+	case "bmp":
+		img, err = bmp.Decode(file)
+	default:
+		err = errors.New("Unsupported file type")
+		log.Errorf("Unsupport image type %v\n", format)
+	}
+	//img, err := jpeg.Decode(file)
+	if err != nil {
+		log.Fatal(err)
+	}
+	file.Close()
+
+	// resize to width 1000 using Lanczos resampling
+	// and preserve aspect ratio
+	m := resize.Resize(thSize, 0, img, resize.Lanczos3)
+
+	if _, err := os.Stat(thPath); os.IsNotExist(err) {
+		os.MkdirAll(thPath, os.ModePerm)
+	}
+
+	out, err := os.Create(thPath + thImgName)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer out.Close()
+
+	switch format {
+	case "jpeg":
+		jpeg.Encode(out, m, nil)
+	case "png":
+		png.Encode(out, m)
+	case "gif":
+		gif.Encode(out, m, nil)
+	case "bmp":
+		bmp.Encode(out, m)
+	default:
+		err = errors.New("Unsupported file type")
+	}
+	// write new image to file
+	//jpeg.Encode(out, m, nil)
+
+	return err
+}
+
 func (env *Env) decodeConfig(filename string) (image.Config, string, error) {
 	f, err := os.Open(filename)
 	if err != nil {
@@ -936,6 +1019,25 @@ func (env *Env) decodeConfig(filename string) (image.Config, string, error) {
 	}
 	defer f.Close()
 	return image.DecodeConfig(bufio.NewReader(f))
+}
+
+func (env *Env) stringInSlice(a string, list []string) bool {
+	for _, b := range list {
+		if b == a {
+			return true
+		}
+	}
+	return false
+}
+
+func (env *Env) string2float64(s string) (f64 float64) {
+
+	i, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		log.Errorf("error converting string %v\t to float64: err: %v\n", s, err)
+		return
+	}
+	return i
 }
 
 func (env *Env) SetField(obj interface{}, name string, value interface{}) error {
